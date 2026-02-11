@@ -29,6 +29,32 @@ class SheetsManager:
         self.client = gspread.authorize(credentials)
         self.spreadsheet = self.client.open_by_key(self.spreadsheet_id)
     
+    def initialize_keuangan_sheet(self):
+        """Initialize Keuangan sheet for financial transactions"""
+        try:
+            keuangan_headers = ['Tanggal', 'Tipe', 'Keterangan', 'Debit', 'Kredit', 'Saldo']
+            
+            try:
+                keuangan_sheet = self.spreadsheet.worksheet('Keuangan')
+            except gspread.WorksheetNotFound:
+                keuangan_sheet = self.spreadsheet.add_worksheet(
+                    title='Keuangan', rows=1000, cols=6
+                )
+            
+            # Check if headers exist
+            if not keuangan_sheet.row_values(1):
+                keuangan_sheet.append_row(keuangan_headers)
+                # Format header with green background
+                keuangan_sheet.format('A1:F1', {
+                    'textFormat': {'bold': True},
+                    'backgroundColor': {'red': 0.2, 'green': 0.8, 'blue': 0.4}
+                })
+                logger.info("Created Keuangan sheet")
+            
+        except Exception as e:
+            logger.error(f"Error initializing Keuangan sheet: {e}")
+            raise
+    
     def initialize_sheets(self):
         """Initialize sheets with headers if not exist"""
         try:
@@ -72,6 +98,9 @@ class SheetsManager:
                     'backgroundColor': {'red': 0.8, 'green': 0.8, 'blue': 0.8}
                 })
                 logger.info("Created History sheet")
+            
+            # Create Keuangan sheet
+            self.initialize_keuangan_sheet()
             
             logger.info("Sheets initialized successfully")
             
@@ -201,8 +230,8 @@ class SheetsManager:
             logger.error(f"Error getting unpaid customers: {e}")
             raise
     
-    def mark_as_paid(self, nama: str, tingkat: int):
-        """Delete row from tingkat sheet and backup to History"""
+    def mark_as_paid(self, nama: str, tingkat: int) -> int:
+        """Delete row from tingkat sheet, backup to History, and update Keuangan"""
         try:
             sheet_name = f'Tingkat {tingkat}'
             tingkat_sheet = self.spreadsheet.worksheet(sheet_name)
@@ -213,7 +242,7 @@ class SheetsManager:
                 if record['Nama'].lower() == nama.lower():
                     # Get transaction data
                     tanggal_transaksi = record['Tanggal']
-                    total = record['Total']
+                    total = int(record['Total'])
                     
                     # Backup to History sheet
                     tanggal_lunas = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -231,10 +260,14 @@ class SheetsManager:
                     # Delete row from tingkat sheet
                     tingkat_sheet.delete_rows(idx)
                     
-                    logger.info(f"Payment processed for {nama} in {sheet_name}: Rp {total:,} - Row deleted and backed up to History")
-                    return
+                    # Add to Keuangan sheet
+                    self.add_pelunasan_to_keuangan(nama, tingkat, total)
+                    
+                    logger.info(f"Payment processed for {nama} in {sheet_name}: Rp {total:,} - Row deleted, backed up to History, and added to Keuangan")
+                    return total
             
             logger.warning(f"Customer {nama} not found in {sheet_name}")
+            return 0
             
         except Exception as e:
             logger.error(f"Error marking as paid: {e}")
@@ -400,4 +433,255 @@ class SheetsManager:
             
         except Exception as e:
             logger.error(f"Error exporting data: {e}")
+            raise
+    
+    def set_modal_awal(self, jumlah: int) -> bool:
+        """Set initial capital (can only be set once)"""
+        try:
+            keuangan_sheet = self.spreadsheet.worksheet('Keuangan')
+            records = keuangan_sheet.get_all_records()
+            
+            # Check if modal already set
+            for record in records:
+                if record.get('Tipe') == 'Modal Awal':
+                    return False
+            
+            # Add modal awal transaction
+            tanggal = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            row = [tanggal, 'Modal Awal', 'Modal awal usaha', jumlah, 0, jumlah]
+            keuangan_sheet.append_row(row)
+            
+            logger.info(f"Modal awal set to: Rp {jumlah:,}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error setting modal awal: {e}")
+            raise
+    
+    def get_modal_awal(self) -> int:
+        """Get initial capital from first Modal Awal transaction"""
+        try:
+            keuangan_sheet = self.spreadsheet.worksheet('Keuangan')
+            records = keuangan_sheet.get_all_records()
+            
+            for record in records:
+                if record.get('Tipe') == 'Modal Awal':
+                    return int(record.get('Debit', 0))
+            
+            return 0
+            
+        except Exception as e:
+            logger.error(f"Error getting modal awal: {e}")
+            raise
+    
+    def get_current_saldo(self) -> int:
+        """Get current balance from last row in Keuangan sheet"""
+        try:
+            keuangan_sheet = self.spreadsheet.worksheet('Keuangan')
+            records = keuangan_sheet.get_all_records()
+            
+            if not records:
+                return 0
+            
+            # Get saldo from last transaction
+            last_record = records[-1]
+            return int(last_record.get('Saldo', 0))
+            
+        except Exception as e:
+            logger.error(f"Error getting current saldo: {e}")
+            raise
+    
+    def add_topup(self, jumlah: int):
+        """Add top-up transaction"""
+        try:
+            keuangan_sheet = self.spreadsheet.worksheet('Keuangan')
+            current_saldo = self.get_current_saldo()
+            new_saldo = current_saldo + jumlah
+            
+            tanggal = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            row = [tanggal, 'Top-up', 'Tambah modal', jumlah, 0, new_saldo]
+            keuangan_sheet.append_row(row)
+            
+            logger.info(f"Top-up added: Rp {jumlah:,}, New saldo: Rp {new_saldo:,}")
+            
+        except Exception as e:
+            logger.error(f"Error adding topup: {e}")
+            raise
+    
+    def add_penarikan(self, jumlah: int) -> bool:
+        """Add withdrawal transaction"""
+        try:
+            current_saldo = self.get_current_saldo()
+            
+            # Check if sufficient balance
+            if current_saldo < jumlah:
+                return False
+            
+            keuangan_sheet = self.spreadsheet.worksheet('Keuangan')
+            new_saldo = current_saldo - jumlah
+            
+            tanggal = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            row = [tanggal, 'Penarikan', 'Ambil saldo', 0, jumlah, new_saldo]
+            keuangan_sheet.append_row(row)
+            
+            logger.info(f"Penarikan added: Rp {jumlah:,}, New saldo: Rp {new_saldo:,}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error adding penarikan: {e}")
+            raise
+    
+    def add_pemasukan(self, jumlah: int, keterangan: str = 'Pemasukan cash'):
+        """Add cash income transaction"""
+        try:
+            keuangan_sheet = self.spreadsheet.worksheet('Keuangan')
+            current_saldo = self.get_current_saldo()
+            new_saldo = current_saldo + jumlah
+            
+            tanggal = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            row = [tanggal, 'Pemasukan', keterangan, jumlah, 0, new_saldo]
+            keuangan_sheet.append_row(row)
+            
+            logger.info(f"Pemasukan added: Rp {jumlah:,}, Keterangan: {keterangan}, New saldo: Rp {new_saldo:,}")
+            
+        except Exception as e:
+            logger.error(f"Error adding pemasukan: {e}")
+            raise
+    
+    def add_pengeluaran(self, jumlah: int, keterangan: str = 'Pengeluaran operasional') -> bool:
+        """Add expense transaction"""
+        try:
+            current_saldo = self.get_current_saldo()
+            
+            # Check if sufficient balance
+            if current_saldo < jumlah:
+                return False
+            
+            keuangan_sheet = self.spreadsheet.worksheet('Keuangan')
+            new_saldo = current_saldo - jumlah
+            
+            tanggal = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            row = [tanggal, 'Pengeluaran', keterangan, 0, jumlah, new_saldo]
+            keuangan_sheet.append_row(row)
+            
+            logger.info(f"Pengeluaran added: Rp {jumlah:,}, Keterangan: {keterangan}, New saldo: Rp {new_saldo:,}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error adding pengeluaran: {e}")
+            raise
+    
+    def add_pelunasan_to_keuangan(self, nama: str, tingkat: int, jumlah: int):
+        """Add pelunasan transaction to Keuangan"""
+        try:
+            keuangan_sheet = self.spreadsheet.worksheet('Keuangan')
+            current_saldo = self.get_current_saldo()
+            new_saldo = current_saldo + jumlah
+            
+            tanggal = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            keterangan = f'{nama} - Tingkat {tingkat}'
+            row = [tanggal, 'Pelunasan', keterangan, jumlah, 0, new_saldo]
+            keuangan_sheet.append_row(row)
+            
+            logger.info(f"Pelunasan added to Keuangan: {nama}, Tingkat {tingkat}, Rp {jumlah:,}, New saldo: Rp {new_saldo:,}")
+            
+        except Exception as e:
+            logger.error(f"Error adding pelunasan to keuangan: {e}")
+            raise
+    
+    def get_keuangan_summary(self) -> Dict:
+        """Return summary for financial dashboard"""
+        try:
+            keuangan_sheet = self.spreadsheet.worksheet('Keuangan')
+            records = keuangan_sheet.get_all_records()
+            
+            current_saldo = self.get_current_saldo()
+            modal_awal = self.get_modal_awal()
+            profit = current_saldo - modal_awal
+            
+            # Calculate totals by type
+            total_pelunasan = 0
+            total_pemasukan = 0
+            total_pengeluaran_ops = 0
+            total_penarikan = 0
+            
+            for record in records:
+                tipe = record.get('Tipe', '')
+                debit = int(record.get('Debit', 0))
+                kredit = int(record.get('Kredit', 0))
+                
+                if tipe == 'Pelunasan':
+                    total_pelunasan += debit
+                elif tipe == 'Pemasukan':
+                    total_pemasukan += debit
+                elif tipe == 'Pengeluaran':
+                    total_pengeluaran_ops += kredit
+                elif tipe == 'Penarikan':
+                    total_penarikan += kredit
+            
+            total_pendapatan = total_pelunasan + total_pemasukan
+            total_pengeluaran = total_pengeluaran_ops + total_penarikan
+            
+            return {
+                'saldo': current_saldo,
+                'modal_awal': modal_awal,
+                'profit': profit,
+                'total_pelunasan': total_pelunasan,
+                'total_pemasukan': total_pemasukan,
+                'total_pendapatan': total_pendapatan,
+                'total_pengeluaran_ops': total_pengeluaran_ops,
+                'total_penarikan': total_penarikan,
+                'total_pengeluaran': total_pengeluaran
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting keuangan summary: {e}")
+            raise
+    
+    def get_keuangan_history(self, limit: int = 10) -> List[Dict]:
+        """Get last N transactions from Keuangan sheet"""
+        try:
+            keuangan_sheet = self.spreadsheet.worksheet('Keuangan')
+            records = keuangan_sheet.get_all_records()
+            
+            # Get last N records (newest first)
+            last_records = list(reversed(records[-limit:]))
+            
+            # Format records
+            history = []
+            for record in last_records:
+                history.append({
+                    'tanggal': record.get('Tanggal', ''),
+                    'tipe': record.get('Tipe', ''),
+                    'keterangan': record.get('Keterangan', ''),
+                    'debit': int(record.get('Debit', 0)),
+                    'kredit': int(record.get('Kredit', 0)),
+                    'saldo': int(record.get('Saldo', 0))
+                })
+            
+            return history
+            
+        except Exception as e:
+            logger.error(f"Error getting keuangan history: {e}")
+            raise
+    
+    def add_debt_quick(self, tingkat: int, nama: str, jumlah: int):
+        """Quick add debt without going through full flow"""
+        try:
+            # Use existing add_transaction with auto-merge
+            transaction_data = {
+                'tanggal': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'tingkat': str(tingkat),
+                'nama': nama,
+                'barang': 'Quick Entry',
+                'jumlah': '-',
+                'harga_satuan': '-',
+                'total': jumlah
+            }
+            
+            self.add_transaction(transaction_data)
+            logger.info(f"Quick debt added: {nama}, Tingkat {tingkat}, Rp {jumlah:,}")
+            
+        except Exception as e:
+            logger.error(f"Error adding quick debt: {e}")
             raise
