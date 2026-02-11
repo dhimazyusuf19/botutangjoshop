@@ -2,6 +2,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from typing import List, Dict
 import logging
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -213,7 +214,6 @@ class SheetsManager:
                     total = record['Total']
                     
                     # Backup to History sheet
-                    from datetime import datetime
                     tanggal_lunas = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     
                     history_sheet = self.spreadsheet.worksheet('History')
