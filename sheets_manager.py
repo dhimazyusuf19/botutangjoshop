@@ -92,14 +92,16 @@ class SheetsManager:
             
             # Check if customer already exists (case-insensitive)
             existing_row_idx = None
+            existing_record = None
             for idx, record in enumerate(records, start=2):  # Start from row 2 (after header)
                 if record['Nama'].lower() == nama.lower():
                     existing_row_idx = idx
+                    existing_record = record
                     break
             
             if existing_row_idx:
                 # Customer exists - MERGE transaction
-                existing_total = int(record['Total'])
+                existing_total = int(existing_record['Total'])
                 new_total = existing_total + data['total']
                 
                 # Update existing row
@@ -328,15 +330,17 @@ class SheetsManager:
                     # Check if customer exists (for auto-merge)
                     records = tingkat_sheet.get_all_records()
                     existing_row_idx = None
+                    existing_record = None
                     
                     for idx, record in enumerate(records, start=2):
                         if record['Nama'].lower() == nama.lower():
                             existing_row_idx = idx
+                            existing_record = record
                             break
                     
                     if existing_row_idx:
                         # Merge with existing
-                        existing_total = int(record['Total'])
+                        existing_total = int(existing_record['Total'])
                         new_total = existing_total + total
                         
                         tingkat_sheet.update_cell(existing_row_idx, 1, tanggal)
