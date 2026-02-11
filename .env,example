@@ -1,0 +1,8 @@
+# Telegram Bot Token dari @BotFather
+TELEGRAM_BOT_TOKEN=your_bot_token_here
+
+# Path ke file credentials Google Sheets API
+GOOGLE_SHEETS_CREDENTIALS=credentials.json
+
+# ID Spreadsheet (dari URL spreadsheet)
+SPREADSHEET_ID=your_spreadsheet_id_here
