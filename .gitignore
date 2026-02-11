@@ -3,6 +3,7 @@
 
 # Google credentials
 credentials.json
+credential.json
 
 # Python
 *.pyc
