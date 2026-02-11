@@ -263,18 +263,34 @@ class KasirBot:
         nama = parts[2]
         
         try:
-            total_sebelum = self.sheets.get_total_debt(nama, tingkat)
-            self.sheets.mark_as_paid(nama, tingkat)
+            # Get balance before
+            saldo_sebelum = self.sheets.get_current_saldo()
             
-            await query.edit_message_text(
-                '✅ *Pelunasan Berhasil!*\n\n'
-                f'👤 Nama: *{nama}*\n'
-                f'🎓 Tingkat: *{tingkat}*\n'
-                f'💰 Total Dilunasi: *Rp {total_sebelum:,}*\n\n'
-                f'Data telah dihapus dari Tingkat {tingkat}\n'
-                'Backup tersimpan di History',
-                parse_mode='Markdown'
-            )
+            # Mark as paid and get the amount
+            total_dilunasi = self.sheets.mark_as_paid(nama, tingkat)
+            
+            if total_dilunasi > 0:
+                # Get balance after
+                saldo_sekarang = self.sheets.get_current_saldo()
+                
+                await query.edit_message_text(
+                    '✅ *Pelunasan Berhasil!*\n\n'
+                    f'👤 Nama: *{nama}*\n'
+                    f'🎓 Tingkat: *{tingkat}*\n'
+                    f'💰 Total Dilunasi: *Rp {total_dilunasi:,}*\n\n'
+                    f'💵 Saldo Sebelum: *Rp {saldo_sebelum:,}*\n'
+                    f'➕ Masuk: *Rp {total_dilunasi:,}*\n'
+                    f'💵 Saldo Sekarang: *Rp {saldo_sekarang:,}*\n\n'
+                    f'🗑️ Data telah dihapus dari Tingkat {tingkat}\n'
+                    '💾 Backup disimpan di History\n'
+                    '💰 Saldo diperbarui di Keuangan\n\n'
+                    '💡 Ketik /saldo untuk lihat dashboard',
+                    parse_mode='Markdown'
+                )
+            else:
+                await query.edit_message_text(
+                    f'❌ Customer {nama} tidak ditemukan di Tingkat {tingkat}'
+                )
             
         except Exception as e:
             logger.error(f"Error marking as paid: {e}")
@@ -506,6 +522,447 @@ class KasirBot:
         context.user_data.clear()
         return ConversationHandler.END
     
+    async def modal_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /modal command to set initial capital"""
+        if not context.args:
+            await update.message.reply_text(
+                '📊 *Cara penggunaan:*\n'
+                '`/modal [jumlah]`\n\n'
+                'Contoh: `/modal 0`',
+                parse_mode='Markdown'
+            )
+            return
+        
+        try:
+            jumlah = int(context.args[0])
+            
+            if jumlah < 0:
+                await update.message.reply_text(
+                    '❌ Jumlah tidak boleh negatif'
+                )
+                return
+            
+            # Try to set modal awal
+            success = self.sheets.set_modal_awal(jumlah)
+            
+            if success:
+                await update.message.reply_text(
+                    f'✅ Modal awal ditetapkan: *Rp {jumlah:,}*\n'
+                    f'💰 Saldo Sekarang: *Rp {jumlah:,}*',
+                    parse_mode='Markdown'
+                )
+            else:
+                # Modal already set
+                modal = self.sheets.get_modal_awal()
+                await update.message.reply_text(
+                    f'❌ Modal sudah ditetapkan sebelumnya: *Rp {modal:,}*\n'
+                    f'💡 Gunakan /topup untuk menambah saldo',
+                    parse_mode='Markdown'
+                )
+                
+        except ValueError:
+            await update.message.reply_text(
+                '❌ Jumlah harus berupa angka'
+            )
+        except Exception as e:
+            logger.error(f"Error in modal handler: {e}")
+            await update.message.reply_text(
+                '❌ Terjadi kesalahan saat menyimpan modal awal.'
+            )
+    
+    async def topup_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /topup command to add balance"""
+        if not context.args:
+            await update.message.reply_text(
+                '💰 *Cara penggunaan:*\n'
+                '`/topup [jumlah]`\n\n'
+                'Contoh: `/topup 100000`',
+                parse_mode='Markdown'
+            )
+            return
+        
+        try:
+            jumlah = int(context.args[0])
+            
+            if jumlah <= 0:
+                await update.message.reply_text(
+                    '❌ Jumlah harus lebih dari 0'
+                )
+                return
+            
+            saldo_sebelum = self.sheets.get_current_saldo()
+            self.sheets.add_topup(jumlah)
+            saldo_sekarang = self.sheets.get_current_saldo()
+            
+            await update.message.reply_text(
+                '✅ *Top-up Berhasil!*\n\n'
+                f'💰 Saldo Sebelum: *Rp {saldo_sebelum:,}*\n'
+                f'➕ Top-up: *Rp {jumlah:,}*\n'
+                f'💰 Saldo Sekarang: *Rp {saldo_sekarang:,}*',
+                parse_mode='Markdown'
+            )
+                
+        except ValueError:
+            await update.message.reply_text(
+                '❌ Jumlah harus berupa angka'
+            )
+        except Exception as e:
+            logger.error(f"Error in topup handler: {e}")
+            await update.message.reply_text(
+                '❌ Terjadi kesalahan saat menambah saldo.'
+            )
+    
+    async def tarik_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /tarik command to withdraw from balance"""
+        if not context.args:
+            await update.message.reply_text(
+                '💸 *Cara penggunaan:*\n'
+                '`/tarik [jumlah]`\n\n'
+                'Contoh: `/tarik 50000`',
+                parse_mode='Markdown'
+            )
+            return
+        
+        try:
+            jumlah = int(context.args[0])
+            
+            if jumlah <= 0:
+                await update.message.reply_text(
+                    '❌ Jumlah harus lebih dari 0'
+                )
+                return
+            
+            saldo_sebelum = self.sheets.get_current_saldo()
+            
+            # Check if sufficient balance
+            if jumlah > saldo_sebelum:
+                await update.message.reply_text(
+                    '❌ *Saldo tidak cukup!*\n\n'
+                    f'💰 Saldo Anda: *Rp {saldo_sebelum:,}*\n'
+                    f'❌ Penarikan: *Rp {jumlah:,}*',
+                    parse_mode='Markdown'
+                )
+                return
+            
+            success = self.sheets.add_penarikan(jumlah)
+            
+            if success:
+                saldo_sekarang = self.sheets.get_current_saldo()
+                await update.message.reply_text(
+                    '✅ *Penarikan Berhasil!*\n\n'
+                    f'💰 Saldo Sebelum: *Rp {saldo_sebelum:,}*\n'
+                    f'➖ Ditarik: *Rp {jumlah:,}*\n'
+                    f'💰 Saldo Sekarang: *Rp {saldo_sekarang:,}*',
+                    parse_mode='Markdown'
+                )
+            else:
+                await update.message.reply_text(
+                    '❌ Saldo tidak cukup!'
+                )
+                
+        except ValueError:
+            await update.message.reply_text(
+                '❌ Jumlah harus berupa angka'
+            )
+        except Exception as e:
+            logger.error(f"Error in tarik handler: {e}")
+            await update.message.reply_text(
+                '❌ Terjadi kesalahan saat menarik saldo.'
+            )
+    
+    async def pemasukan_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /pemasukan command to record cash income"""
+        if not context.args or len(context.args) < 1:
+            await update.message.reply_text(
+                '💵 *Cara penggunaan:*\n'
+                '`/pemasukan [jumlah] [keterangan]`\n\n'
+                'Contoh: `/pemasukan 75000 Penjualan tunai ke Toko A`',
+                parse_mode='Markdown'
+            )
+            return
+        
+        try:
+            jumlah = int(context.args[0])
+            
+            if jumlah <= 0:
+                await update.message.reply_text(
+                    '❌ Jumlah harus lebih dari 0'
+                )
+                return
+            
+            # Get keterangan from remaining args
+            keterangan = ' '.join(context.args[1:]) if len(context.args) > 1 else 'Pemasukan cash'
+            
+            saldo_sebelum = self.sheets.get_current_saldo()
+            self.sheets.add_pemasukan(jumlah, keterangan)
+            saldo_sekarang = self.sheets.get_current_saldo()
+            
+            await update.message.reply_text(
+                '✅ *Pemasukan Berhasil Dicatat!*\n\n'
+                f'💰 Jumlah: *Rp {jumlah:,}*\n'
+                f'📝 Keterangan: {keterangan}\n\n'
+                f'💵 Saldo Sebelum: *Rp {saldo_sebelum:,}*\n'
+                f'➕ Masuk: *Rp {jumlah:,}*\n'
+                f'💵 Saldo Sekarang: *Rp {saldo_sekarang:,}*',
+                parse_mode='Markdown'
+            )
+                
+        except ValueError:
+            await update.message.reply_text(
+                '❌ Jumlah harus berupa angka'
+            )
+        except Exception as e:
+            logger.error(f"Error in pemasukan handler: {e}")
+            await update.message.reply_text(
+                '❌ Terjadi kesalahan saat mencatat pemasukan.'
+            )
+    
+    async def pengeluaran_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /pengeluaran command to record expenses"""
+        if not context.args or len(context.args) < 1:
+            await update.message.reply_text(
+                '💸 *Cara penggunaan:*\n'
+                '`/pengeluaran [jumlah] [keterangan]`\n\n'
+                'Contoh: `/pengeluaran 50000 Beli bahan baku`',
+                parse_mode='Markdown'
+            )
+            return
+        
+        try:
+            jumlah = int(context.args[0])
+            
+            if jumlah <= 0:
+                await update.message.reply_text(
+                    '❌ Jumlah harus lebih dari 0'
+                )
+                return
+            
+            # Get keterangan from remaining args
+            keterangan = ' '.join(context.args[1:]) if len(context.args) > 1 else 'Pengeluaran operasional'
+            
+            saldo_sebelum = self.sheets.get_current_saldo()
+            
+            # Check if sufficient balance
+            if jumlah > saldo_sebelum:
+                await update.message.reply_text(
+                    '❌ *Saldo tidak cukup!*\n\n'
+                    f'💰 Saldo Anda: *Rp {saldo_sebelum:,}*\n'
+                    f'❌ Pengeluaran: *Rp {jumlah:,}*',
+                    parse_mode='Markdown'
+                )
+                return
+            
+            success = self.sheets.add_pengeluaran(jumlah, keterangan)
+            
+            if success:
+                saldo_sekarang = self.sheets.get_current_saldo()
+                await update.message.reply_text(
+                    '✅ *Pengeluaran Berhasil Dicatat!*\n\n'
+                    f'💰 Jumlah: *Rp {jumlah:,}*\n'
+                    f'📝 Keterangan: {keterangan}\n\n'
+                    f'💵 Saldo Sebelum: *Rp {saldo_sebelum:,}*\n'
+                    f'➖ Keluar: *Rp {jumlah:,}*\n'
+                    f'💵 Saldo Sekarang: *Rp {saldo_sekarang:,}*',
+                    parse_mode='Markdown'
+                )
+            else:
+                await update.message.reply_text(
+                    '❌ Saldo tidak cukup!'
+                )
+                
+        except ValueError:
+            await update.message.reply_text(
+                '❌ Jumlah harus berupa angka'
+            )
+        except Exception as e:
+            logger.error(f"Error in pengeluaran handler: {e}")
+            await update.message.reply_text(
+                '❌ Terjadi kesalahan saat mencatat pengeluaran.'
+            )
+    
+    async def utang_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /utang command for quick debt entry"""
+        if not context.args or len(context.args) < 3:
+            await update.message.reply_text(
+                '📝 *Cara penggunaan:*\n'
+                '`/utang [tingkat] [nama] [jumlah]`\n\n'
+                'Contoh: `/utang 2 Yusuf 15000`',
+                parse_mode='Markdown'
+            )
+            return
+        
+        try:
+            tingkat = int(context.args[0])
+            
+            if tingkat not in [1, 2, 3, 4]:
+                await update.message.reply_text(
+                    '❌ Tingkat harus 1-4'
+                )
+                return
+            
+            # Get nama (could be multiple words)
+            nama = ' '.join(context.args[1:-1])
+            
+            if not nama:
+                await update.message.reply_text(
+                    '❌ Nama tidak boleh kosong'
+                )
+                return
+            
+            jumlah = int(context.args[-1])
+            
+            if jumlah <= 0:
+                await update.message.reply_text(
+                    '❌ Jumlah harus lebih dari 0'
+                )
+                return
+            
+            # Add debt using quick method
+            self.sheets.add_debt_quick(tingkat, nama, jumlah)
+            
+            # Get updated total debt for this customer
+            total_utang = self.sheets.get_total_debt(nama, tingkat)
+            
+            await update.message.reply_text(
+                '✅ *Utang Berhasil Dicatat!*\n\n'
+                f'👤 Nama: *{nama}*\n'
+                f'🎓 Tingkat: *{tingkat}*\n'
+                f'💰 Jumlah: *Rp {jumlah:,}*\n\n'
+                f'📊 Total Utang {nama} (Tingkat {tingkat}): *Rp {total_utang:,}*\n\n'
+                '💡 Ketik /lunas untuk pelunasan\n'
+                '💡 Ketik /cek ' + nama + ' untuk cek total utang',
+                parse_mode='Markdown'
+            )
+                
+        except ValueError:
+            await update.message.reply_text(
+                '❌ Format tidak valid. Pastikan tingkat dan jumlah berupa angka.'
+            )
+        except Exception as e:
+            logger.error(f"Error in utang handler: {e}")
+            await update.message.reply_text(
+                '❌ Terjadi kesalahan saat mencatat utang.'
+            )
+    
+    async def saldo_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /saldo command to show financial dashboard"""
+        try:
+            # Get financial summary
+            summary = self.sheets.get_keuangan_summary()
+            
+            # Get debt stats
+            stats_data = self.sheets.get_stats()
+            
+            # Build debt breakdown
+            debt_breakdown = ""
+            total_utang = 0
+            for tingkat in range(1, 5):
+                tingkat_debt = stats_data['tingkat'][tingkat]['total_debt']
+                debt_breakdown += f"│ Tingkat {tingkat}: Rp {tingkat_debt:,}\n"
+                total_utang += tingkat_debt
+            
+            # Calculate potential total
+            potensi_total = summary['saldo'] + total_utang
+            
+            message = (
+                '💰 *DASHBOARD KEUANGAN JO SHOP*\n\n'
+                '┌─ SALDO & MODAL ─────────────────┐\n'
+                f'│ 💵 Saldo di Tangan: Rp {summary["saldo"]:,}\n'
+                f'│ 📊 Modal Awal: Rp {summary["modal_awal"]:,}\n'
+                f'│ 📈 Profit Bersih: Rp {summary["profit"]:,}\n'
+                '└──────────────────────────────────┘\n\n'
+                '┌─ UTANG (Belum Lunas) ───────────┐\n'
+                f'{debt_breakdown}'
+                '│ ─────────────────────\n'
+                f'│ 🔴 Total Utang: Rp {total_utang:,}\n'
+                '└──────────────────────────────────┘\n\n'
+                '┌─ PENDAPATAN ────────────────────┐\n'
+                f'│ ✅ Pelunasan: Rp {summary["total_pelunasan"]:,}\n'
+                f'│ 💵 Pemasukan Cash: Rp {summary["total_pemasukan"]:,}\n'
+                '│ ─────────────────────\n'
+                f'│ 📈 Total Pendapatan: Rp {summary["total_pendapatan"]:,}\n'
+                '└──────────────────────────────────┘\n\n'
+                '┌─ PENGELUARAN ───────────────────┐\n'
+                f'│ 💸 Operasional: Rp {summary["total_pengeluaran_ops"]:,}\n'
+                f'│ 💰 Penarikan: Rp {summary["total_penarikan"]:,}\n'
+                '│ ─────────────────────\n'
+                f'│ 📉 Total Pengeluaran: Rp {summary["total_pengeluaran"]:,}\n'
+                '└──────────────────────────────────┘\n\n'
+                '┌─ PROYEKSI ──────────────────────┐\n'
+                f'│ 💰 Saldo Saat Ini: Rp {summary["saldo"]:,}\n'
+                f'│ 📥 Utang Belum Masuk: Rp {total_utang:,}\n'
+                '│ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+                f'│ 💵 Potensi Total: Rp {potensi_total:,}\n'
+                '└──────────────────────────────────┘'
+            )
+            
+            await update.message.reply_text(message, parse_mode='Markdown')
+            
+        except Exception as e:
+            logger.error(f"Error in saldo handler: {e}")
+            await update.message.reply_text(
+                '❌ Terjadi kesalahan saat mengambil data keuangan.'
+            )
+    
+    async def history_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /history command to show transaction history"""
+        try:
+            history = self.sheets.get_keuangan_history(10)
+            
+            if not history:
+                await update.message.reply_text(
+                    '📜 Belum ada transaksi keuangan'
+                )
+                return
+            
+            # Get icon for each transaction type
+            type_icons = {
+                'Modal Awal': '📊',
+                'Top-up': '➕',
+                'Penarikan': '💰',
+                'Pelunasan': '✅',
+                'Pemasukan': '💵',
+                'Pengeluaran': '💸'
+            }
+            
+            message = '📜 *RIWAYAT TRANSAKSI KEUANGAN*\n\n'
+            
+            for record in history:
+                icon = type_icons.get(record['tipe'], '📝')
+                amount = record['debit'] if record['debit'] > 0 else record['kredit']
+                
+                # Format date (only show date and time, no seconds)
+                tanggal_parts = record['tanggal'].split(' ')
+                if len(tanggal_parts) >= 2:
+                    date_part = tanggal_parts[0]
+                    time_part = tanggal_parts[1][:5]  # HH:MM only
+                    tanggal_str = f'{date_part} {time_part}'
+                else:
+                    tanggal_str = record['tanggal']
+                
+                message += (
+                    f'{tanggal_str} | {icon} {record["tipe"]:<12} | Rp {amount:,}\n'
+                    f'  └─ {record["keterangan"]}\n\n'
+                )
+            
+            # Add current balance
+            current_saldo = self.sheets.get_current_saldo()
+            message += f'💰 *Saldo Sekarang: Rp {current_saldo:,}*\n\n'
+            
+            # Add hint
+            if len(history) >= 10:
+                message += 'Menampilkan 10 transaksi terakhir\n\n'
+            
+            message += '💡 Ketik /saldo untuk dashboard lengkap'
+            
+            await update.message.reply_text(message, parse_mode='Markdown')
+            
+        except Exception as e:
+            logger.error(f"Error in history handler: {e}")
+            await update.message.reply_text(
+                '❌ Terjadi kesalahan saat mengambil riwayat transaksi.'
+            )
+    
     def run(self):
         """Run the bot"""
         # Initialize sheets
@@ -550,6 +1007,16 @@ class KasirBot:
         application.add_handler(CommandHandler('cek', self.cek))
         application.add_handler(CommandHandler('stats', self.stats))
         application.add_handler(CommandHandler('export', self.export))
+        
+        # Financial management handlers
+        application.add_handler(CommandHandler('modal', self.modal_handler))
+        application.add_handler(CommandHandler('topup', self.topup_handler))
+        application.add_handler(CommandHandler('tarik', self.tarik_handler))
+        application.add_handler(CommandHandler('pemasukan', self.pemasukan_handler))
+        application.add_handler(CommandHandler('pengeluaran', self.pengeluaran_handler))
+        application.add_handler(CommandHandler('utang', self.utang_handler))
+        application.add_handler(CommandHandler('saldo', self.saldo_handler))
+        application.add_handler(CommandHandler('history', self.history_handler))
         
         # Start bot
         logger.info("Bot is starting...")
