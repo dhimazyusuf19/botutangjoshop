@@ -941,7 +941,7 @@ class KasirBot:
                     tanggal_str = record['tanggal']
                 
                 message += (
-                    f'{tanggal_str} | {icon} {record["tipe"]:<12} | Rp {amount:,}\n'
+                    f'{tanggal_str} | {icon} {record["tipe"]} | Rp {amount:,}\n'
                     f'  └─ {record["keterangan"]}\n\n'
                 )
             
