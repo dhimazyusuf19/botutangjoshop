@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 # Conversation states
 TINGKAT, NAMA, BARANG, JUMLAH = range(4)
+IMPORT_TINGKAT, IMPORT_FILE = range(4, 6)
 
 # Data barang
 ITEMS = {
@@ -85,10 +86,11 @@ class KasirBot:
         
         context.user_data['nama'] = nama
         
-        # Cek total utang yang ada
+        # Cek total utang yang ada untuk tingkat ini
         try:
-            total_utang = self.sheets.get_total_debt(nama)
-            utang_info = f'\n💰 Total utang saat ini: *Rp {total_utang:,}*' if total_utang > 0 else ''
+            tingkat = int(context.user_data['tingkat'])
+            total_utang = self.sheets.get_total_debt(nama, tingkat)
+            utang_info = f'\n💰 Total utang saat ini (Tingkat {tingkat}): *Rp {total_utang:,}*' if total_utang > 0 else ''
         except Exception as e:
             logger.error(f"Error getting debt: {e}")
             utang_info = ''
@@ -151,15 +153,15 @@ class KasirBot:
                 'barang': item['name'],
                 'jumlah': jumlah,
                 'harga_satuan': item['price'],
-                'total': total,
-                'status': 'Belum Lunas'
+                'total': total
             }
             
             self.sheets.add_transaction(transaction_data)
             
-            # Get updated total debt
+            # Get updated total debt for this tingkat
             nama = context.user_data['nama']
-            total_utang = self.sheets.get_total_debt(nama)
+            tingkat = int(context.user_data['tingkat'])
+            total_utang = self.sheets.get_total_debt(nama, tingkat)
             
             await update.message.reply_text(
                 '✅ *Transaksi Berhasil Dicatat!*\n\n'
@@ -169,10 +171,10 @@ class KasirBot:
                 f'🔢 Jumlah: *{jumlah}*\n'
                 f'💵 Harga Satuan: *Rp {item["price"]:,}*\n'
                 f'💰 Total Transaksi: *Rp {total:,}*\n\n'
-                f'📊 *Total Utang {nama}: Rp {total_utang:,}*\n\n'
+                f'📊 *Total Utang {nama} (Tingkat {tingkat}): Rp {total_utang:,}*\n\n'
                 'Ketik /start untuk transaksi baru\n'
                 'Ketik /lunas untuk pelunasan\n'
-                'Ketik /cek untuk cek utang',
+                'Ketik /stats untuk statistik',
                 parse_mode='Markdown'
             )
             
@@ -194,13 +196,34 @@ class KasirBot:
             return ConversationHandler.END
     
     async def lunas(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Command untuk pelunasan"""
+        """Command untuk pelunasan - show tingkat selection"""
+        keyboard = [
+            [InlineKeyboardButton("Tingkat 1", callback_data='lunas_tingkat_1')],
+            [InlineKeyboardButton("Tingkat 2", callback_data='lunas_tingkat_2')],
+            [InlineKeyboardButton("Tingkat 3", callback_data='lunas_tingkat_3')],
+            [InlineKeyboardButton("Tingkat 4", callback_data='lunas_tingkat_4')],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(
+            '💳 *Pilih tingkat untuk pelunasan:*',
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+    
+    async def lunas_tingkat_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle tingkat selection for payment"""
+        query = update.callback_query
+        await query.answer()
+        
+        tingkat = int(query.data.split('_')[2])
+        
         try:
-            customers = self.sheets.get_unpaid_customers()
+            customers = self.sheets.get_unpaid_customers(tingkat)
             
             if not customers:
-                await update.message.reply_text(
-                    '✅ Tidak ada utang yang perlu dilunasi!'
+                await query.edit_message_text(
+                    f'✅ Tidak ada utang di Tingkat {tingkat}!'
                 )
                 return
             
@@ -211,21 +234,21 @@ class KasirBot:
                 keyboard.append([
                     InlineKeyboardButton(
                         f"{nama} - Rp {total:,}",
-                        callback_data=f'lunas_{nama}'
+                        callback_data=f'bayar_{tingkat}_{nama}'
                     )
                 ])
             
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            await update.message.reply_text(
-                '💳 *Pilih nama untuk pelunasan:*',
+            await query.edit_message_text(
+                f'💳 *Pilih nama untuk pelunasan (Tingkat {tingkat}):*',
                 reply_markup=reply_markup,
                 parse_mode='Markdown'
             )
             
         except Exception as e:
-            logger.error(f"Error in lunas command: {e}")
-            await update.message.reply_text(
+            logger.error(f"Error in lunas tingkat handler: {e}")
+            await query.edit_message_text(
                 '❌ Terjadi kesalahan. Pastikan spreadsheet sudah dikonfigurasi dengan benar.'
             )
     
@@ -234,17 +257,22 @@ class KasirBot:
         query = update.callback_query
         await query.answer()
         
-        nama = query.data.replace('lunas_', '')
+        # Parse callback data: bayar_{tingkat}_{nama}
+        parts = query.data.split('_', 2)
+        tingkat = int(parts[1])
+        nama = parts[2]
         
         try:
-            total_sebelum = self.sheets.get_total_debt(nama)
-            self.sheets.mark_as_paid(nama)
+            total_sebelum = self.sheets.get_total_debt(nama, tingkat)
+            self.sheets.mark_as_paid(nama, tingkat)
             
             await query.edit_message_text(
                 '✅ *Pelunasan Berhasil!*\n\n'
                 f'👤 Nama: *{nama}*\n'
+                f'🎓 Tingkat: *{tingkat}*\n'
                 f'💰 Total Dilunasi: *Rp {total_sebelum:,}*\n\n'
-                'Status di spreadsheet telah diupdate menjadi "Lunas"',
+                f'Data telah dihapus dari Tingkat {tingkat}\n'
+                'Backup tersimpan di History',
                 parse_mode='Markdown'
             )
             
@@ -268,13 +296,23 @@ class KasirBot:
         nama = ' '.join(context.args)
         
         try:
-            total_utang = self.sheets.get_total_debt(nama)
+            # Get debt breakdown per tingkat
+            breakdown = []
+            grand_total = 0
             
-            if total_utang > 0:
+            for tingkat in range(1, 5):
+                total_tingkat = self.sheets.get_total_debt(nama, tingkat)
+                if total_tingkat > 0:
+                    breakdown.append(f'Tingkat {tingkat}: Rp {total_tingkat:,}')
+                    grand_total += total_tingkat
+            
+            if grand_total > 0:
+                breakdown_text = '\n'.join(breakdown)
                 await update.message.reply_text(
                     f'📊 *Status Utang*\n\n'
-                    f'👤 Nama: *{nama}*\n'
-                    f'💰 Total Utang: *Rp {total_utang:,}*',
+                    f'👤 Nama: *{nama}*\n\n'
+                    f'{breakdown_text}\n\n'
+                    f'💰 *Total Semua: Rp {grand_total:,}*',
                     parse_mode='Markdown'
                 )
             else:
@@ -288,6 +326,176 @@ class KasirBot:
             await update.message.reply_text(
                 '❌ Terjadi kesalahan saat mengecek utang.'
             )
+    
+    async def stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Command untuk menampilkan statistik"""
+        try:
+            stats_data = self.sheets.get_stats()
+            
+            message = '📊 *Statistik Per Tingkat*\n\n'
+            
+            for tingkat in range(1, 5):
+                tingkat_stats = stats_data['tingkat'][tingkat]
+                message += (
+                    f'*Tingkat {tingkat}:*\n'
+                    f'  💰 Total Utang: Rp {tingkat_stats["total_debt"]:,}\n'
+                    f'  👥 Pelanggan: {tingkat_stats["num_customers"]}\n'
+                    f'  📝 Transaksi: {tingkat_stats["num_transactions"]}\n\n'
+                )
+            
+            message += (
+                f'📈 *TOTAL KESELURUHAN:*\n'
+                f'💰 Rp {stats_data["grand_total"]:,}\n'
+                f'👥 {stats_data["total_customers"]} pelanggan\n'
+                f'📝 {stats_data["total_transactions"]} transaksi'
+            )
+            
+            await update.message.reply_text(message, parse_mode='Markdown')
+            
+        except Exception as e:
+            logger.error(f"Error getting stats: {e}")
+            await update.message.reply_text(
+                '❌ Terjadi kesalahan saat mengambil statistik.'
+            )
+    
+    async def export(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Command untuk export data per tingkat"""
+        if not context.args:
+            await update.message.reply_text(
+                '📤 *Cara penggunaan:*\n'
+                '`/export [tingkat]`\n\n'
+                'Contoh: `/export 2`',
+                parse_mode='Markdown'
+            )
+            return
+        
+        try:
+            tingkat = int(context.args[0])
+            
+            if tingkat not in [1, 2, 3, 4]:
+                await update.message.reply_text(
+                    '❌ Tingkat harus 1, 2, 3, atau 4'
+                )
+                return
+            
+            # Get CSV data
+            csv_data = self.sheets.export_data(tingkat)
+            
+            if not csv_data:
+                await update.message.reply_text(
+                    f'❌ Tidak ada data di Tingkat {tingkat}'
+                )
+                return
+            
+            # Generate filename
+            from datetime import datetime
+            filename = f'tingkat_{tingkat}_{datetime.now().strftime("%Y%m%d")}.csv'
+            
+            # Send as document
+            from io import BytesIO
+            csv_bytes = BytesIO(csv_data.encode('utf-8'))
+            csv_bytes.name = filename
+            
+            await update.message.reply_document(
+                document=csv_bytes,
+                filename=filename,
+                caption=f'✅ Export data Tingkat {tingkat}'
+            )
+            
+        except ValueError:
+            await update.message.reply_text(
+                '❌ Format tidak valid. Gunakan `/export [tingkat]`',
+                parse_mode='Markdown'
+            )
+        except Exception as e:
+            logger.error(f"Error exporting data: {e}")
+            await update.message.reply_text(
+                '❌ Terjadi kesalahan saat export data.'
+            )
+    
+    async def import_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Start import conversation"""
+        keyboard = [
+            [InlineKeyboardButton("Tingkat 1", callback_data='import_tingkat_1')],
+            [InlineKeyboardButton("Tingkat 2", callback_data='import_tingkat_2')],
+            [InlineKeyboardButton("Tingkat 3", callback_data='import_tingkat_3')],
+            [InlineKeyboardButton("Tingkat 4", callback_data='import_tingkat_4')],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(
+            '📥 *Import CSV Database*\n\n'
+            'Pilih tingkat untuk import:',
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+        
+        return IMPORT_TINGKAT
+    
+    async def import_tingkat_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle tingkat selection for import"""
+        query = update.callback_query
+        await query.answer()
+        
+        tingkat = int(query.data.split('_')[2])
+        context.user_data['import_tingkat'] = tingkat
+        
+        await query.edit_message_text(
+            f'✅ Tingkat: *{tingkat}*\n\n'
+            '📤 Upload file CSV dengan format:\n'
+            '`Tanggal,Nama,Barang,Jumlah,Harga Satuan,Total`\n\n'
+            'Contoh:\n'
+            '`2026-02-11,Yusuf,Roti,5,3000,15000`',
+            parse_mode='Markdown'
+        )
+        
+        return IMPORT_FILE
+    
+    async def import_file_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle CSV file upload"""
+        try:
+            document = update.message.document
+            
+            if not document.file_name.endswith('.csv'):
+                await update.message.reply_text(
+                    '❌ File harus berformat CSV (.csv)'
+                )
+                return IMPORT_FILE
+            
+            # Download file
+            file = await context.bot.get_file(document.file_id)
+            file_bytes = await file.download_as_bytearray()
+            csv_content = file_bytes.decode('utf-8')
+            
+            # Import data
+            tingkat = context.user_data['import_tingkat']
+            result = self.sheets.import_data(tingkat, csv_content)
+            
+            # Get total debt after import
+            stats_data = self.sheets.get_stats()
+            tingkat_total = stats_data['tingkat'][tingkat]['total_debt']
+            
+            await update.message.reply_text(
+                '✅ *Import Berhasil!*\n\n'
+                f'📊 Hasil Import Tingkat {tingkat}:\n'
+                f'  ✅ {result["imported"]} baris baru\n'
+                f'  🔄 {result["merged"]} baris di-merge\n'
+                f'  ⚠️ {result["skipped"]} baris dilewati\n\n'
+                f'💰 Total Utang Tingkat {tingkat}: Rp {tingkat_total:,}',
+                parse_mode='Markdown'
+            )
+            
+            # Clear user data
+            context.user_data.clear()
+            
+            return ConversationHandler.END
+            
+        except Exception as e:
+            logger.error(f"Error importing file: {e}")
+            await update.message.reply_text(
+                '❌ Terjadi kesalahan saat import file. Pastikan format CSV sudah benar.'
+            )
+            return ConversationHandler.END
     
     async def cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Cancel conversation"""
@@ -323,11 +531,25 @@ class KasirBot:
             fallbacks=[CommandHandler('cancel', self.cancel)],
         )
         
+        # Conversation handler untuk import
+        import_handler = ConversationHandler(
+            entry_points=[CommandHandler('import', self.import_cmd)],
+            states={
+                IMPORT_TINGKAT: [CallbackQueryHandler(self.import_tingkat_handler, pattern='^import_tingkat_')],
+                IMPORT_FILE: [MessageHandler(filters.Document.ALL, self.import_file_handler)],
+            },
+            fallbacks=[CommandHandler('cancel', self.cancel)],
+        )
+        
         # Add handlers
         application.add_handler(conv_handler)
+        application.add_handler(import_handler)
         application.add_handler(CommandHandler('lunas', self.lunas))
-        application.add_handler(CallbackQueryHandler(self.lunas_handler, pattern='^lunas_'))
+        application.add_handler(CallbackQueryHandler(self.lunas_tingkat_handler, pattern='^lunas_tingkat_'))
+        application.add_handler(CallbackQueryHandler(self.lunas_handler, pattern='^bayar_'))
         application.add_handler(CommandHandler('cek', self.cek))
+        application.add_handler(CommandHandler('stats', self.stats))
+        application.add_handler(CommandHandler('export', self.export))
         
         # Start bot
         logger.info("Bot is starting...")
