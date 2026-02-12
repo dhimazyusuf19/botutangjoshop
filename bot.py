@@ -844,6 +844,93 @@ class KasirBot:
                 '❌ Terjadi kesalahan saat mencatat utang.'
             )
     
+    async def bayar_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /bayar command for partial or full payment"""
+        if not context.args or len(context.args) < 3:
+            await update.message.reply_text(
+                '💳 *Cara penggunaan:*\n'
+                '`/bayar [tingkat] [nama] [jumlah]`\n\n'
+                'Contoh: `/bayar 2 Yusuf 10000`\n\n'
+                '💡 Jika jumlah bayar = utang → Pelunasan (utang dihapus)\n'
+                '💡 Jika jumlah bayar < utang → Cicilan (utang berkurang)\n'
+                '💡 Jika jumlah bayar > utang → Error',
+                parse_mode='Markdown'
+            )
+            return
+        
+        try:
+            tingkat = int(context.args[0])
+            
+            if tingkat not in [1, 2, 3, 4]:
+                await update.message.reply_text(
+                    '❌ Tingkat harus 1-4'
+                )
+                return
+            
+            # Get nama (could be multiple words)
+            nama = ' '.join(context.args[1:-1])
+            
+            if not nama:
+                await update.message.reply_text(
+                    '❌ Nama tidak boleh kosong'
+                )
+                return
+            
+            jumlah_bayar = int(context.args[-1])
+            
+            if jumlah_bayar <= 0:
+                await update.message.reply_text(
+                    '❌ Jumlah bayar harus lebih dari 0'
+                )
+                return
+            
+            # Process payment
+            result = self.sheets.process_payment(tingkat, nama, jumlah_bayar)
+            
+            if not result['success']:
+                await update.message.reply_text(
+                    f'❌ {result["message"]}'
+                )
+                return
+            
+            # Success message
+            if result['type'] == 'pelunasan':
+                message = (
+                    '✅ *PELUNASAN BERHASIL!*\n\n'
+                    f'👤 Nama: *{nama}*\n'
+                    f'🎓 Tingkat: *{tingkat}*\n'
+                    f'💰 Total Dilunasi: *Rp {result["jumlah_bayar"]:,}*\n\n'
+                    '🎉 Utang telah lunas!\n\n'
+                    f'💵 Saldo Sebelum: Rp {result["saldo_sebelum"]:,}\n'
+                    f'💵 Saldo Sekarang: Rp {result["saldo_sekarang"]:,}\n\n'
+                    '📜 Data telah dipindahkan ke History\n'
+                    '💡 Ketik /history untuk melihat riwayat transaksi'
+                )
+            else:  # cicilan
+                message = (
+                    '✅ *PEMBAYARAN CICILAN BERHASIL!*\n\n'
+                    f'👤 Nama: *{nama}*\n'
+                    f'🎓 Tingkat: *{tingkat}*\n'
+                    f'💰 Dibayar: *Rp {result["jumlah_bayar"]:,}*\n'
+                    f'💳 Sisa Utang: *Rp {result["sisa_utang"]:,}*\n\n'
+                    f'💵 Saldo Sebelum: Rp {result["saldo_sebelum"]:,}\n'
+                    f'💵 Saldo Sekarang: Rp {result["saldo_sekarang"]:,}\n\n'
+                    '💡 Ketik /bayar lagi untuk cicilan berikutnya\n'
+                    '💡 Ketik /cek ' + nama + ' untuk cek sisa utang'
+                )
+            
+            await update.message.reply_text(message, parse_mode='Markdown')
+                
+        except ValueError:
+            await update.message.reply_text(
+                '❌ Format tidak valid. Pastikan tingkat dan jumlah berupa angka.'
+            )
+        except Exception as e:
+            logger.error(f"Error in bayar handler: {e}")
+            await update.message.reply_text(
+                '❌ Terjadi kesalahan saat memproses pembayaran.'
+            )
+    
     async def saldo_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /saldo command to show financial dashboard"""
         try:
@@ -878,6 +965,7 @@ class KasirBot:
                 '└──────────────────────────────────┘\n\n'
                 '┌─ PENDAPATAN ────────────────────┐\n'
                 f'│ ✅ Pelunasan: Rp {summary["total_pelunasan"]:,}\n'
+                f'│ 💳 Pembayaran Cicilan: Rp {summary["total_cicilan"]:,}\n'
                 f'│ 💵 Pemasukan Cash: Rp {summary["total_pemasukan"]:,}\n'
                 '│ ─────────────────────\n'
                 f'│ 📈 Total Pendapatan: Rp {summary["total_pendapatan"]:,}\n'
@@ -921,6 +1009,7 @@ class KasirBot:
                 'Top-up': '➕',
                 'Penarikan': '💰',
                 'Pelunasan': '✅',
+                'Pembayaran Cicilan': '💳',
                 'Pemasukan': '💵',
                 'Pengeluaran': '💸'
             }
@@ -1015,6 +1104,7 @@ class KasirBot:
         application.add_handler(CommandHandler('pemasukan', self.pemasukan_handler))
         application.add_handler(CommandHandler('pengeluaran', self.pengeluaran_handler))
         application.add_handler(CommandHandler('utang', self.utang_handler))
+        application.add_handler(CommandHandler('bayar', self.bayar_handler))
         application.add_handler(CommandHandler('saldo', self.saldo_handler))
         application.add_handler(CommandHandler('history', self.history_handler))
         

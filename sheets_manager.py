@@ -601,6 +601,7 @@ class SheetsManager:
             
             # Calculate totals by type
             total_pelunasan = 0
+            total_cicilan = 0
             total_pemasukan = 0
             total_pengeluaran_ops = 0
             total_penarikan = 0
@@ -612,6 +613,8 @@ class SheetsManager:
                 
                 if tipe == 'Pelunasan':
                     total_pelunasan += debit
+                elif tipe == 'Pembayaran Cicilan':
+                    total_cicilan += debit
                 elif tipe == 'Pemasukan':
                     total_pemasukan += debit
                 elif tipe == 'Pengeluaran':
@@ -619,7 +622,7 @@ class SheetsManager:
                 elif tipe == 'Penarikan':
                     total_penarikan += kredit
             
-            total_pendapatan = total_pelunasan + total_pemasukan
+            total_pendapatan = total_pelunasan + total_cicilan + total_pemasukan
             total_pengeluaran = total_pengeluaran_ops + total_penarikan
             
             return {
@@ -627,6 +630,7 @@ class SheetsManager:
                 'modal_awal': modal_awal,
                 'profit': profit,
                 'total_pelunasan': total_pelunasan,
+                'total_cicilan': total_cicilan,
                 'total_pemasukan': total_pemasukan,
                 'total_pendapatan': total_pendapatan,
                 'total_pengeluaran_ops': total_pengeluaran_ops,
@@ -684,4 +688,117 @@ class SheetsManager:
             
         except Exception as e:
             logger.error(f"Error adding quick debt: {e}")
+            raise
+    
+    def process_payment(self, tingkat: int, nama: str, jumlah_bayar: int) -> Dict:
+        """Process payment - partial or full
+        
+        Returns:
+            Dict with keys: success, message, type (pelunasan/cicilan), 
+            saldo_sebelum, saldo_sekarang, sisa_utang
+        """
+        try:
+            sheet_name = f'Tingkat {tingkat}'
+            tingkat_sheet = self.spreadsheet.worksheet(sheet_name)
+            records = tingkat_sheet.get_all_records()
+            
+            # Find customer
+            customer_row_idx = None
+            customer_record = None
+            
+            for idx, record in enumerate(records, start=2):
+                if record['Nama'].lower() == nama.lower():
+                    customer_row_idx = idx
+                    customer_record = record
+                    break
+            
+            if not customer_record:
+                return {
+                    'success': False,
+                    'message': f'Customer {nama} tidak ditemukan di Tingkat {tingkat}'
+                }
+            
+            current_debt = int(customer_record['Total'])
+            
+            # Validate payment amount
+            if jumlah_bayar > current_debt:
+                return {
+                    'success': False,
+                    'message': f'Jumlah pembayaran (Rp {jumlah_bayar:,}) melebihi total utang (Rp {current_debt:,})'
+                }
+            
+            if jumlah_bayar <= 0:
+                return {
+                    'success': False,
+                    'message': 'Jumlah pembayaran harus lebih dari 0'
+                }
+            
+            # Get balance before
+            saldo_sebelum = self.get_current_saldo()
+            
+            if jumlah_bayar == current_debt:
+                # Full payment - delete row and backup to History
+                tanggal_transaksi = customer_record['Tanggal']
+                tanggal_lunas = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                
+                # Backup to History
+                history_sheet = self.spreadsheet.worksheet('History')
+                history_row = [
+                    tanggal_lunas,
+                    tingkat,
+                    tanggal_transaksi,
+                    nama,
+                    current_debt
+                ]
+                history_sheet.append_row(history_row)
+                
+                # Delete from tingkat sheet
+                tingkat_sheet.delete_rows(customer_row_idx)
+                
+                # Add to Keuangan as Pelunasan
+                self.add_pelunasan_to_keuangan(nama, tingkat, jumlah_bayar)
+                
+                saldo_sekarang = self.get_current_saldo()
+                
+                logger.info(f"Full payment processed for {nama} in {sheet_name}: Rp {jumlah_bayar:,}")
+                
+                return {
+                    'success': True,
+                    'message': 'Pelunasan berhasil! Utang telah lunas.',
+                    'type': 'pelunasan',
+                    'saldo_sebelum': saldo_sebelum,
+                    'saldo_sekarang': saldo_sekarang,
+                    'sisa_utang': 0,
+                    'jumlah_bayar': jumlah_bayar
+                }
+            else:
+                # Partial payment - update Total
+                new_debt = current_debt - jumlah_bayar
+                tingkat_sheet.update_cell(customer_row_idx, 6, new_debt)  # Update Total column
+                
+                # Add to Keuangan as Pembayaran Cicilan
+                keuangan_sheet = self.spreadsheet.worksheet('Keuangan')
+                new_saldo = saldo_sebelum + jumlah_bayar
+                
+                tanggal = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                keterangan = f'{nama} - Tingkat {tingkat} (Sisa: Rp {new_debt:,})'
+                row = [tanggal, 'Pembayaran Cicilan', keterangan, jumlah_bayar, 0, new_saldo]
+                keuangan_sheet.append_row(row)
+                
+                saldo_sekarang = new_saldo
+                
+                logger.info(f"Partial payment processed for {nama} in {sheet_name}: Rp {jumlah_bayar:,}, Remaining: Rp {new_debt:,}")
+                
+                return {
+                    'success': True,
+                    'message': 'Pembayaran cicilan berhasil!',
+                    'type': 'cicilan',
+                    'saldo_sebelum': saldo_sebelum,
+                    'saldo_sekarang': saldo_sekarang,
+                    'sisa_utang': new_debt,
+                    'jumlah_bayar': jumlah_bayar
+                }
+            
+        except Exception as e:
+            logger.error(f"Error processing payment: {e}")
             raise
