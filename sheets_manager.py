@@ -602,7 +602,7 @@ class SheetsManager:
             # Find the customer row
             customer_found = False
             for idx, record in enumerate(records, start=2):  # Start from row 2 (after header)
-                if record['Nama'].lower() == nama.lower():
+                if record['Nama'].strip().lower() == nama.strip().lower():
                     customer_found = True
                     current_debt = int(record['Total'])
                     
@@ -660,7 +660,7 @@ class SheetsManager:
                         keuangan_sheet = self.spreadsheet.worksheet('Keuangan')
                         new_saldo = saldo_sebelum + jumlah
                         tanggal = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        keterangan = f'{nama} - Tingkat {tingkat} (Rp {jumlah:,} dari Rp {current_debt:,})'
+                        keterangan = f'{nama} - Tingkat {tingkat} (Bayar: Rp {jumlah:,}, Sisa: Rp {sisa_utang:,})'
                         keuangan_row = [tanggal, 'Pembayaran Cicilan', keterangan, jumlah, 0, new_saldo]
                         keuangan_sheet.append_row(keuangan_row)
                         
