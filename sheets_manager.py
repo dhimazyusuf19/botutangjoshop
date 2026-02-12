@@ -9,6 +9,9 @@ logger = logging.getLogger(__name__)
 class SheetsManager:
     """Manager for Google Sheets operations"""
     
+    # Column indices for tingkat sheets (1-based for gspread)
+    TOTAL_COLUMN_INDEX = 6
+    
     def __init__(self, credentials_path: str, spreadsheet_id: str):
         self.credentials_path = credentials_path
         self.spreadsheet_id = spreadsheet_id
@@ -651,7 +654,7 @@ class SheetsManager:
                         }
                     else:
                         # Partial payment - UPDATE Total column
-                        tingkat_sheet.update_cell(idx, 6, sisa_utang)  # Column 6 is Total
+                        tingkat_sheet.update_cell(idx, self.TOTAL_COLUMN_INDEX, sisa_utang)
                         
                         # Add to Keuangan as Pembayaran Cicilan
                         keuangan_sheet = self.spreadsheet.worksheet('Keuangan')

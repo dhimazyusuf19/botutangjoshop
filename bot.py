@@ -865,7 +865,12 @@ class KasirBot:
                 return
             
             # Get nama (could be multiple words)
-            nama = ' '.join(context.args[1:-1])
+            # For 3 args: /bayar 2 Yusuf 20000 -> nama = "Yusuf"
+            # For 4+ args: /bayar 2 Yusuf Ali 20000 -> nama = "Yusuf Ali"
+            if len(context.args) == 3:
+                nama = context.args[1]
+            else:
+                nama = ' '.join(context.args[1:-1])
             
             if not nama:
                 await update.message.reply_text(
