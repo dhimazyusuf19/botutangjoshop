@@ -136,11 +136,31 @@ Bot: ✅ Transaksi Berhasil!
      Total Utang Yusuf: Rp 15.000
 ```
 
-### Melunasi Utang
+### Catat Utang Cepat
+
+Untuk mencatat utang tanpa melalui menu `/start`:
+
+```
+/utang 2 Yusuf 15000
+```
+
+### Bayar Utang (Cicilan atau Lunas)
+
+Untuk mencatat pembayaran utang (bisa cicilan atau lunas):
+
+```
+/bayar 2 Yusuf 10000
+```
+
+- **Jika jumlah < total utang**: Dicatat sebagai **Pembayaran Cicilan**
+- **Jika jumlah = total utang**: Dicatat sebagai **Pelunasan** (data dihapus dan backup ke History)
+
+### Melunasi Utang (UI)
 
 1. Ketik `/lunas`
-2. Pilih nama dari daftar yang muncul
-3. Bot akan update status menjadi "Lunas"
+2. Pilih tingkat
+3. Pilih nama dari daftar yang muncul
+4. Bot akan menghapus data dari tingkat sheet dan backup ke History
 
 ### Cek Total Utang
 
@@ -148,7 +168,54 @@ Bot: ✅ Transaksi Berhasil!
 /cek Yusuf
 ```
 
-Bot akan menampilkan total utang **Yusuf**.
+Bot akan menampilkan total utang **Yusuf** per tingkat.
+
+### Manajemen Keuangan
+
+#### Set Modal Awal (Hanya Sekali)
+```
+/modal 0
+```
+
+#### Top-up Saldo
+```
+/topup 100000
+```
+
+#### Tarik Saldo
+```
+/tarik 50000
+```
+
+#### Catat Pemasukan Cash
+```
+/pemasukan 75000 Penjualan tunai ke Toko A
+```
+
+#### Catat Pengeluaran
+```
+/pengeluaran 50000 Beli bahan baku
+```
+
+#### Dashboard Keuangan
+```
+/saldo
+```
+
+Menampilkan:
+- Saldo di tangan
+- Modal awal & profit
+- Total utang belum lunas
+- Total pendapatan (pelunasan + pemasukan)
+- Total pengeluaran
+- Proyeksi total jika semua utang lunas
+
+#### Riwayat Transaksi
+```
+/history
+```
+
+Menampilkan 10 transaksi keuangan terakhir.
 
 ### Membatalkan Transaksi
 
@@ -158,12 +225,35 @@ Jika sedang dalam proses input, ketik `/cancel`
 
 Bot akan otomatis membuat sheet dengan struktur:
 
-### Sheet: Transaksi
+### Sheet: Tingkat 1-4
 
-| Tanggal | Tingkat | Nama | Barang | Jumlah | Harga Satuan | Total | Status |
-|---------|---------|------|---------|--------|--------------|-------|--------|
-| 2026-02-11 10:30:00 | 2 | Yusuf | Roti | 5 | 3000 | 15000 | Belum Lunas |
-| 2026-02-11 11:15:00 | 3 | Andi | Basreng | 2 | 7500 | 15000 | Lunas |
+| Tanggal | Nama | Barang | Jumlah | Harga Satuan | Total |
+|---------|------|---------|--------|--------------|-------|
+| 2026-02-11 10:30:00 | Yusuf | Roti | 5 | 3000 | 15000 |
+
+### Sheet: History
+
+| Tanggal Lunas | Tingkat | Tanggal Transaksi | Nama | Total |
+|---------------|---------|-------------------|------|-------|
+| 2026-02-12 08:00:00 | 2 | 2026-02-11 10:30:00 | Yusuf | 15000 |
+
+### Sheet: Keuangan
+
+| Tanggal | Tipe | Keterangan | Debit | Kredit | Saldo |
+|---------|------|------------|-------|--------|-------|
+| 2026-02-12 08:00:00 | Modal Awal | Modal awal usaha | 0 | 0 | 0 |
+| 2026-02-12 08:05:00 | Top-up | Tambah modal | 100000 | 0 | 100000 |
+| 2026-02-12 09:00:00 | Pelunasan | Yusuf - Tingkat 2 | 15000 | 0 | 115000 |
+| 2026-02-12 10:00:00 | Pembayaran Cicilan | Andi - Tingkat 3 (Cicilan) | 10000 | 0 | 125000 |
+
+**Tipe Transaksi:**
+- **Modal Awal**: Modal awal usaha (hanya sekali)
+- **Top-up**: Penambahan modal
+- **Penarikan**: Penarikan saldo
+- **Pelunasan**: Pembayaran utang penuh
+- **Pembayaran Cicilan**: Pembayaran utang sebagian
+- **Pemasukan**: Pemasukan cash lainnya
+- **Pengeluaran**: Pengeluaran operasional
 
 ## 🛠️ Troubleshooting
 
@@ -191,12 +281,36 @@ Bot akan otomatis membuat sheet dengan struktur:
 
 ## 📝 Commands
 
+### Transaksi & Utang
+
 | Command | Deskripsi |
 |---------|-----------|
 | `/start` | Mulai transaksi baru |
-| `/lunas` | Tandai pelunasan |
-| `/cek [nama]` | Cek total utang |
+| `/utang [tingkat] [nama] [jumlah]` | Catat utang baru (quick entry) |
+| `/cek [nama]` | Cek total utang customer |
+| `/lunas` | Tandai pelunasan penuh |
+| `/bayar [tingkat] [nama] [jumlah]` | Bayar utang (cicilan atau lunas) |
 | `/cancel` | Batalkan transaksi |
+
+### Manajemen Keuangan
+
+| Command | Deskripsi |
+|---------|-----------|
+| `/modal [jumlah]` | Set modal awal (hanya sekali) |
+| `/topup [jumlah]` | Tambah saldo |
+| `/tarik [jumlah]` | Tarik saldo |
+| `/pemasukan [jumlah] [keterangan]` | Catat pemasukan cash |
+| `/pengeluaran [jumlah] [keterangan]` | Catat pengeluaran |
+| `/saldo` | Lihat dashboard keuangan |
+| `/history` | Lihat 10 transaksi terakhir |
+
+### Data & Statistik
+
+| Command | Deskripsi |
+|---------|-----------|
+| `/stats` | Statistik per tingkat |
+| `/export [tingkat]` | Export data CSV |
+| `/import` | Import data CSV |
 
 ## 🤝 Kontribusi
 
