@@ -865,12 +865,7 @@ class KasirBot:
                 return
             
             # Get nama (could be multiple words)
-            # For 3 args: /bayar 2 Yusuf 20000 -> nama = "Yusuf"
-            # For 4+ args: /bayar 2 Yusuf Ali 20000 -> nama = "Yusuf Ali"
-            if len(context.args) == 3:
-                nama = context.args[1]
-            else:
-                nama = ' '.join(context.args[1:-1])
+            nama = ' '.join(context.args[1:-1])
             
             if not nama:
                 await update.message.reply_text(
@@ -1001,7 +996,7 @@ class KasirBot:
                 '└──────────────────────────────────┘\n\n'
                 '┌─ PENGELUARAN ───────────────────┐\n'
                 f'│ 💸 Operasional: Rp {summary["total_pengeluaran_ops"]:,}\n'
-                f'│ 💰 Penarikan: Rp {summary["total_penarikan"]:,}\n'
+                f'│ 🏧 Penarikan: Rp {summary["total_penarikan"]:,}\n'
                 '│ ─────────────────────\n'
                 f'│ 📉 Total Pengeluaran: Rp {summary["total_pengeluaran"]:,}\n'
                 '└──────────────────────────────────┘\n\n'
@@ -1036,7 +1031,7 @@ class KasirBot:
             type_icons = {
                 'Modal Awal': '📊',
                 'Top-up': '➕',
-                'Penarikan': '💰',
+                'Penarikan': '🏧',
                 'Pelunasan': '✅',
                 'Pembayaran Cicilan': '💵',
                 'Pemasukan': '💰',
