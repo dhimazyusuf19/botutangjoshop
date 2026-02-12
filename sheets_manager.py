@@ -589,6 +589,106 @@ class SheetsManager:
             logger.error(f"Error adding pelunasan to keuangan: {e}")
             raise
     
+    def add_pembayaran_cicilan_to_keuangan(self, nama: str, tingkat: int, jumlah: int):
+        """Add partial payment (cicilan) transaction to Keuangan"""
+        try:
+            keuangan_sheet = self.spreadsheet.worksheet('Keuangan')
+            current_saldo = self.get_current_saldo()
+            new_saldo = current_saldo + jumlah
+            
+            tanggal = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            keterangan = f'{nama} - Tingkat {tingkat} (Cicilan)'
+            row = [tanggal, 'Pembayaran Cicilan', keterangan, jumlah, 0, new_saldo]
+            keuangan_sheet.append_row(row)
+            
+            logger.info(f"Pembayaran Cicilan added to Keuangan: {nama}, Tingkat {tingkat}, Rp {jumlah:,}, New saldo: Rp {new_saldo:,}")
+            
+        except Exception as e:
+            logger.error(f"Error adding pembayaran cicilan to keuangan: {e}")
+            raise
+    
+    def partial_payment(self, nama: str, tingkat: int, jumlah: int) -> Dict:
+        """
+        Process partial payment - reduce debt and update Keuangan
+        Returns dict with success status, remaining debt, and messages
+        """
+        try:
+            sheet_name = f'Tingkat {tingkat}'
+            tingkat_sheet = self.spreadsheet.worksheet(sheet_name)
+            records = tingkat_sheet.get_all_records()
+            
+            # Find the customer row
+            for idx, record in enumerate(records, start=2):  # Start from row 2 (after header)
+                if record['Nama'].lower() == nama.lower():
+                    current_debt = int(record['Total'])
+                    
+                    if jumlah > current_debt:
+                        return {
+                            'success': False,
+                            'error': 'amount_exceeds_debt',
+                            'current_debt': current_debt,
+                            'amount': jumlah
+                        }
+                    
+                    if jumlah == current_debt:
+                        # Full payment - delete row and backup to History
+                        tanggal_transaksi = record['Tanggal']
+                        tanggal_lunas = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        
+                        history_sheet = self.spreadsheet.worksheet('History')
+                        history_row = [
+                            tanggal_lunas,
+                            tingkat,
+                            tanggal_transaksi,
+                            nama,
+                            current_debt
+                        ]
+                        history_sheet.append_row(history_row)
+                        
+                        # Delete row from tingkat sheet
+                        tingkat_sheet.delete_rows(idx)
+                        
+                        # Add to Keuangan as Pelunasan
+                        self.add_pelunasan_to_keuangan(nama, tingkat, jumlah)
+                        
+                        logger.info(f"Full payment processed for {nama} in {sheet_name}: Rp {jumlah:,} - Row deleted, backed up to History")
+                        
+                        return {
+                            'success': True,
+                            'payment_type': 'full',
+                            'amount': jumlah,
+                            'remaining_debt': 0
+                        }
+                    else:
+                        # Partial payment - reduce debt
+                        new_debt = current_debt - jumlah
+                        tingkat_sheet.update_cell(idx, 6, new_debt)  # Update Total column
+                        
+                        # Add to Keuangan as Pembayaran Cicilan
+                        self.add_pembayaran_cicilan_to_keuangan(nama, tingkat, jumlah)
+                        
+                        logger.info(f"Partial payment processed for {nama} in {sheet_name}: Rp {jumlah:,} - New debt: Rp {new_debt:,}")
+                        
+                        return {
+                            'success': True,
+                            'payment_type': 'partial',
+                            'amount': jumlah,
+                            'previous_debt': current_debt,
+                            'remaining_debt': new_debt
+                        }
+            
+            # Customer not found
+            return {
+                'success': False,
+                'error': 'customer_not_found',
+                'nama': nama,
+                'tingkat': tingkat
+            }
+            
+        except Exception as e:
+            logger.error(f"Error processing partial payment: {e}")
+            raise
+    
     def get_keuangan_summary(self) -> Dict:
         """Return summary for financial dashboard"""
         try:

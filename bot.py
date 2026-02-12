@@ -844,6 +844,119 @@ class KasirBot:
                 '❌ Terjadi kesalahan saat mencatat utang.'
             )
     
+    async def bayar_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /bayar command for partial or full debt payment"""
+        if not context.args or len(context.args) < 3:
+            await update.message.reply_text(
+                '💳 *Cara penggunaan:*\n'
+                '`/bayar [tingkat] [nama] [jumlah]`\n\n'
+                'Contoh: `/bayar 2 Yusuf 10000`\n\n'
+                '💡 Tips:\n'
+                '• Jika jumlah = total utang → Pelunasan penuh\n'
+                '• Jika jumlah < total utang → Pembayaran cicilan',
+                parse_mode='Markdown'
+            )
+            return
+        
+        try:
+            tingkat = int(context.args[0])
+            
+            if tingkat not in [1, 2, 3, 4]:
+                await update.message.reply_text(
+                    '❌ Tingkat harus 1-4'
+                )
+                return
+            
+            # Get nama (could be multiple words)
+            nama = ' '.join(context.args[1:-1])
+            
+            if not nama:
+                await update.message.reply_text(
+                    '❌ Nama tidak boleh kosong'
+                )
+                return
+            
+            jumlah = int(context.args[-1])
+            
+            if jumlah <= 0:
+                await update.message.reply_text(
+                    '❌ Jumlah harus lebih dari 0'
+                )
+                return
+            
+            # Get balance before
+            saldo_sebelum = self.sheets.get_current_saldo()
+            
+            # Process payment
+            result = self.sheets.partial_payment(nama, tingkat, jumlah)
+            
+            if not result['success']:
+                if result['error'] == 'customer_not_found':
+                    await update.message.reply_text(
+                        f'❌ *Customer tidak ditemukan*\n\n'
+                        f'👤 Nama: {nama}\n'
+                        f'🎓 Tingkat: {tingkat}\n\n'
+                        '💡 Gunakan /cek untuk melihat daftar utang',
+                        parse_mode='Markdown'
+                    )
+                elif result['error'] == 'amount_exceeds_debt':
+                    await update.message.reply_text(
+                        f'❌ *Jumlah pembayaran melebihi utang!*\n\n'
+                        f'💰 Total Utang: *Rp {result["current_debt"]:,}*\n'
+                        f'💳 Jumlah Bayar: *Rp {result["amount"]:,}*\n\n'
+                        f'💡 Maksimal pembayaran: Rp {result["current_debt"]:,}',
+                        parse_mode='Markdown'
+                    )
+                return
+            
+            # Get balance after
+            saldo_sekarang = self.sheets.get_current_saldo()
+            
+            if result['payment_type'] == 'full':
+                # Full payment (Pelunasan)
+                await update.message.reply_text(
+                    '✅ *PELUNASAN BERHASIL!*\n\n'
+                    f'👤 Nama: *{nama}*\n'
+                    f'🎓 Tingkat: *{tingkat}*\n'
+                    f'💰 Total Dilunasi: *Rp {jumlah:,}*\n\n'
+                    f'💵 Saldo Sebelum: *Rp {saldo_sebelum:,}*\n'
+                    f'➕ Masuk: *Rp {jumlah:,}*\n'
+                    f'💵 Saldo Sekarang: *Rp {saldo_sekarang:,}*\n\n'
+                    f'🗑️ Data telah dihapus dari Tingkat {tingkat}\n'
+                    '💾 Backup disimpan di History\n'
+                    '💰 Saldo diperbarui di Keuangan\n\n'
+                    '💡 Ketik /saldo untuk lihat dashboard',
+                    parse_mode='Markdown'
+                )
+            else:
+                # Partial payment (Pembayaran Cicilan)
+                await update.message.reply_text(
+                    '✅ *PEMBAYARAN CICILAN BERHASIL!*\n\n'
+                    f'👤 Nama: *{nama}*\n'
+                    f'🎓 Tingkat: *{tingkat}*\n'
+                    f'💳 Dibayar: *Rp {jumlah:,}*\n\n'
+                    f'📊 Utang Sebelum: *Rp {result["previous_debt"]:,}*\n'
+                    f'➖ Dibayar: *Rp {jumlah:,}*\n'
+                    f'📊 Sisa Utang: *Rp {result["remaining_debt"]:,}*\n\n'
+                    f'💵 Saldo Sebelum: *Rp {saldo_sebelum:,}*\n'
+                    f'➕ Masuk: *Rp {jumlah:,}*\n'
+                    f'💵 Saldo Sekarang: *Rp {saldo_sekarang:,}*\n\n'
+                    '💰 Saldo diperbarui di Keuangan\n\n'
+                    '💡 Ketik /saldo untuk lihat dashboard\n'
+                    f'💡 Ketik /cek {nama} untuk cek sisa utang',
+                    parse_mode='Markdown'
+                )
+                
+        except ValueError:
+            await update.message.reply_text(
+                '❌ Format tidak valid. Pastikan tingkat dan jumlah berupa angka.'
+            )
+        except Exception as e:
+            logger.error(f"Error in bayar handler: {e}")
+            await update.message.reply_text(
+                '❌ Terjadi kesalahan saat memproses pembayaran.'
+            )
+    
     async def saldo_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /saldo command to show financial dashboard"""
         try:
@@ -1015,6 +1128,7 @@ class KasirBot:
         application.add_handler(CommandHandler('pemasukan', self.pemasukan_handler))
         application.add_handler(CommandHandler('pengeluaran', self.pengeluaran_handler))
         application.add_handler(CommandHandler('utang', self.utang_handler))
+        application.add_handler(CommandHandler('bayar', self.bayar_handler))
         application.add_handler(CommandHandler('saldo', self.saldo_handler))
         application.add_handler(CommandHandler('history', self.history_handler))
         
