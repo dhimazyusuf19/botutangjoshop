@@ -630,7 +630,7 @@ class SheetsManager:
                             'amount': jumlah
                         }
                     
-                    if jumlah == current_debt:
+                    elif jumlah == current_debt:
                         # Full payment - delete row and backup to History
                         tanggal_transaksi = record['Tanggal']
                         tanggal_lunas = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -659,7 +659,7 @@ class SheetsManager:
                             'amount': jumlah,
                             'remaining_debt': 0
                         }
-                    else:
+                    else:  # jumlah < current_debt
                         # Partial payment - reduce debt
                         new_debt = current_debt - jumlah
                         tingkat_sheet.update_cell(idx, 6, new_debt)  # Update Total column

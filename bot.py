@@ -867,16 +867,21 @@ class KasirBot:
                 )
                 return
             
-            # Get nama (could be multiple words)
-            nama = ' '.join(context.args[1:-1])
+            # Get nama and jumlah
+            # If exactly 3 args: tingkat, nama (single word), jumlah
+            # If more than 3 args: tingkat, nama (multiple words), jumlah
+            if len(context.args) == 3:
+                nama = context.args[1]
+                jumlah = int(context.args[2])
+            else:
+                nama = ' '.join(context.args[1:-1])
+                jumlah = int(context.args[-1])
             
             if not nama:
                 await update.message.reply_text(
                     '❌ Nama tidak boleh kosong'
                 )
                 return
-            
-            jumlah = int(context.args[-1])
             
             if jumlah <= 0:
                 await update.message.reply_text(
