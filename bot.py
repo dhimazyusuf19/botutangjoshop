@@ -1034,6 +1034,7 @@ class KasirBot:
                 'Top-up': '➕',
                 'Penarikan': '💰',
                 'Pelunasan': '✅',
+                'Pembayaran Cicilan': '💳',
                 'Pemasukan': '💵',
                 'Pengeluaran': '💸'
             }

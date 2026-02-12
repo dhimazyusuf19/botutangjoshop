@@ -710,7 +710,7 @@ class SheetsManager:
                 debit = int(record.get('Debit', 0))
                 kredit = int(record.get('Kredit', 0))
                 
-                if tipe == 'Pelunasan':
+                if tipe == 'Pelunasan' or tipe == 'Pembayaran Cicilan':
                     total_pelunasan += debit
                 elif tipe == 'Pemasukan':
                     total_pemasukan += debit
