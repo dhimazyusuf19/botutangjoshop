@@ -830,7 +830,7 @@ class KasirBot:
                 f'💰 Jumlah: *Rp {jumlah:,}*\n\n'
                 f'📊 Total Utang {nama} (Tingkat {tingkat}): *Rp {total_utang:,}*\n\n'
                 '💡 Ketik /lunas untuk pelunasan\n'
-                '💡 Ketik /cek ' + nama + ' untuk cek total utang',
+                f'💡 Ketik /cek {nama} untuk cek total utang',
                 parse_mode='Markdown'
             )
                 
@@ -916,7 +916,7 @@ class KasirBot:
                     f'💵 Saldo Sebelum: Rp {result["saldo_sebelum"]:,}\n'
                     f'💵 Saldo Sekarang: Rp {result["saldo_sekarang"]:,}\n\n'
                     '💡 Ketik /bayar lagi untuk cicilan berikutnya\n'
-                    '💡 Ketik /cek ' + nama + ' untuk cek sisa utang'
+                    f'💡 Ketik /cek {nama} untuk cek sisa utang'
                 )
             
             await update.message.reply_text(message, parse_mode='Markdown')
