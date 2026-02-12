@@ -589,6 +589,105 @@ class SheetsManager:
             logger.error(f"Error adding pelunasan to keuangan: {e}")
             raise
     
+    def process_payment(self, nama: str, tingkat: int, jumlah: int) -> Dict:
+        """Process payment (partial or full) for a customer"""
+        try:
+            sheet_name = f'Tingkat {tingkat}'
+            tingkat_sheet = self.spreadsheet.worksheet(sheet_name)
+            records = tingkat_sheet.get_all_records()
+            
+            # Find the customer row
+            customer_found = False
+            for idx, record in enumerate(records, start=2):  # Start from row 2 (after header)
+                if record['Nama'].lower() == nama.lower():
+                    customer_found = True
+                    current_debt = int(record['Total'])
+                    
+                    # Validate payment amount
+                    if jumlah > current_debt:
+                        return {
+                            'success': False,
+                            'error': 'exceeds_debt',
+                            'current_debt': current_debt,
+                            'payment': jumlah
+                        }
+                    
+                    # Calculate remaining debt
+                    sisa_utang = current_debt - jumlah
+                    saldo_sebelum = self.get_current_saldo()
+                    
+                    if sisa_utang == 0:
+                        # Full payment - DELETE row and backup to History
+                        tanggal_transaksi = record['Tanggal']
+                        tanggal_lunas = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        
+                        # Backup to History
+                        history_sheet = self.spreadsheet.worksheet('History')
+                        history_row = [tanggal_lunas, tingkat, tanggal_transaksi, nama, current_debt]
+                        history_sheet.append_row(history_row)
+                        
+                        # Delete row from tingkat sheet
+                        tingkat_sheet.delete_rows(idx)
+                        
+                        # Add to Keuangan as Pelunasan
+                        keuangan_sheet = self.spreadsheet.worksheet('Keuangan')
+                        new_saldo = saldo_sebelum + jumlah
+                        keterangan = f'{nama} - Tingkat {tingkat}'
+                        keuangan_row = [tanggal_lunas, 'Pelunasan', keterangan, jumlah, 0, new_saldo]
+                        keuangan_sheet.append_row(keuangan_row)
+                        
+                        logger.info(f"Full payment processed: {nama}, Tingkat {tingkat}, Rp {jumlah:,}")
+                        
+                        return {
+                            'success': True,
+                            'is_full_payment': True,
+                            'nama': nama,
+                            'tingkat': tingkat,
+                            'payment': jumlah,
+                            'previous_debt': current_debt,
+                            'remaining_debt': 0,
+                            'saldo_sebelum': saldo_sebelum,
+                            'saldo_sekarang': new_saldo
+                        }
+                    else:
+                        # Partial payment - UPDATE Total column
+                        tingkat_sheet.update_cell(idx, 6, sisa_utang)  # Column 6 is Total
+                        
+                        # Add to Keuangan as Pembayaran Cicilan
+                        keuangan_sheet = self.spreadsheet.worksheet('Keuangan')
+                        new_saldo = saldo_sebelum + jumlah
+                        tanggal = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        keterangan = f'{nama} - Tingkat {tingkat} (Rp {jumlah:,} dari Rp {current_debt:,})'
+                        keuangan_row = [tanggal, 'Pembayaran Cicilan', keterangan, jumlah, 0, new_saldo]
+                        keuangan_sheet.append_row(keuangan_row)
+                        
+                        logger.info(f"Partial payment processed: {nama}, Tingkat {tingkat}, Rp {jumlah:,}, Remaining: Rp {sisa_utang:,}")
+                        
+                        return {
+                            'success': True,
+                            'is_full_payment': False,
+                            'nama': nama,
+                            'tingkat': tingkat,
+                            'payment': jumlah,
+                            'previous_debt': current_debt,
+                            'remaining_debt': sisa_utang,
+                            'saldo_sebelum': saldo_sebelum,
+                            'saldo_sekarang': new_saldo
+                        }
+            
+            # Customer not found
+            if not customer_found:
+                return {
+                    'success': False,
+                    'error': 'not_found',
+                    'nama': nama,
+                    'tingkat': tingkat
+                }
+            
+        except Exception as e:
+            logger.error(f"Error processing payment: {e}")
+            raise
+    
     def get_keuangan_summary(self) -> Dict:
         """Return summary for financial dashboard"""
         try:
@@ -601,6 +700,7 @@ class SheetsManager:
             
             # Calculate totals by type
             total_pelunasan = 0
+            total_cicilan = 0
             total_pemasukan = 0
             total_pengeluaran_ops = 0
             total_penarikan = 0
@@ -612,6 +712,8 @@ class SheetsManager:
                 
                 if tipe == 'Pelunasan':
                     total_pelunasan += debit
+                elif tipe == 'Pembayaran Cicilan':
+                    total_cicilan += debit
                 elif tipe == 'Pemasukan':
                     total_pemasukan += debit
                 elif tipe == 'Pengeluaran':
@@ -619,7 +721,7 @@ class SheetsManager:
                 elif tipe == 'Penarikan':
                     total_penarikan += kredit
             
-            total_pendapatan = total_pelunasan + total_pemasukan
+            total_pendapatan = total_pelunasan + total_cicilan + total_pemasukan
             total_pengeluaran = total_pengeluaran_ops + total_penarikan
             
             return {
@@ -627,6 +729,7 @@ class SheetsManager:
                 'modal_awal': modal_awal,
                 'profit': profit,
                 'total_pelunasan': total_pelunasan,
+                'total_cicilan': total_cicilan,
                 'total_pemasukan': total_pemasukan,
                 'total_pendapatan': total_pendapatan,
                 'total_pengeluaran_ops': total_pengeluaran_ops,
